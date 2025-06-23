@@ -31,18 +31,14 @@
             margin-top: 20px;
             width: 70%;
             margin: 20px auto;
-            text-align: center;
         }
         .add-form input[type="text"] {
             padding: 8px;
-@@ -40,64 +22,57 @@
+            width: 70%;
+        }
+        .add-form button {
             padding: 8px;
             width: 20%;
-        }
-        .message {
-            text-align: center;
-            color: green;
-            margin-top: 10px;
         }
     </style>
 </head>
@@ -66,7 +62,6 @@
 <div class="add-form">
     <input type="text" id="newItem" placeholder="Enter new item">
     <button onclick="addItem()">Add</button>
-    <div id="message" class="message"></div>
 </div>
 
 <script>
@@ -90,38 +85,12 @@
 
     function addItem() {
         const newItemInput = document.getElementById('newItem');
-        const messageDiv = document.getElementById('message');
         const newItemText = newItemInput.value.trim();
 
         if (newItemText) {
             items.push({ id: nextId++, text: newItemText });
             newItemInput.value = '';
             renderList();
-            fetch('/add', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ text: newItemText })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    messageDiv.textContent = 'Item added successfully!';
-                    newItemInput.value = '';
-                    setTimeout(() => {
-                        messageDiv.textContent = '';
-                    }, 2000);
-                } else {
-                    messageDiv.textContent = 'Error adding item';
-                    messageDiv.style.color = 'red';
-                }
-            })
-            .catch(error => {
-                console.error('Error:', error);
-                messageDiv.textContent = 'Error adding item';
-                messageDiv.style.color = 'red';
-            });
         }
     }
 
