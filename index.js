@@ -13,7 +13,7 @@ const dbConfig = {
     database: 'todolist'
 };
 
-// Create database connection pool
+// Create database connection pool.
 const pool = mysql.createPool(dbConfig);
 
 // Helper function to execute SQL queries
