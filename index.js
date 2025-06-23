@@ -13,7 +13,7 @@ const JWT_SECRET = 'your_jwt_secret_key'; // Change this in production!
 const dbConfig = {
     host: 'localhost',
     user: 'root',
-    password: '',
+    password: '43Qwerty',
     database: 'todolist_auth'
 };
 
