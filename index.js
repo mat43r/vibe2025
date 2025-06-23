@@ -2,14 +2,14 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const mysql = require('mysql2/promise');
-const url = require('url');
-const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 
 const PORT = 3000;
-const JWT_SECRET = 'your_jwt_secret_key'; // Change this in production!
 
-// Database configuration
+// Храним активные сессии в памяти
+const sessions = {};
+
+// Конфиг БД
 const dbConfig = {
     host: 'localhost',
     user: 'root',
@@ -17,243 +17,126 @@ const dbConfig = {
     database: 'todolist_auth'
 };
 
-// Create database connection pool.
+// Пул соединений MySQL
 const pool = mysql.createPool(dbConfig);
 
-// Helper function to execute SQL queries
-async function query(sql, params) {
-    const connection = await pool.getConnection();
-    try {
-        const [results] = await connection.execute(sql, params);
-        return results;
-    } finally {
-        connection.release();
-    }
+// Проверка авторизации
+function checkAuth(req) {
+    const cookies = req.headers.cookie || '';
+    const sessionId = cookies.split('=')[1];
+    return sessions[sessionId];
 }
 
-// Initialize database
-async function initializeDatabase() {
-    try {
-        // Create users table
-        await query(`
-            CREATE TABLE IF NOT EXISTS users (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                username VARCHAR(255) NOT NULL UNIQUE,
-                password VARCHAR(255) NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
-
-        // Create todos table with user relationship
-        await query(`
-            CREATE TABLE IF NOT EXISTS todos (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                user_id INT NOT NULL,
-                text VARCHAR(255) NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(id)
-            )
-        `);
-
-        console.log('Database initialized');
-    } catch (error) {
-        console.error('Error initializing database:', error);
-    }
+// Инициализация БД
+async function initDB() {
+    const conn = await pool.getConnection();
+    await conn.query(`
+        CREATE TABLE IF NOT EXISTS users (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            username VARCHAR(255) UNIQUE,
+            password VARCHAR(255)
+        )
+    `);
+    await conn.query(`
+        CREATE TABLE IF NOT EXISTS todos (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT,
+            text TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    `);
+    conn.release();
 }
 
-// Auth middleware
-function authenticate(req, res, next) {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-    
-    if (!token) return res.writeHead(401).end('Unauthorized');
-
-    jwt.verify(token, JWT_SECRET, (err, user) => {
-        if (err) return res.writeHead(403).end('Forbidden');
-        req.user = user;
-        next();
-    });
-}
-
-// Handle HTTP requests
-async function handleRequest(req, res) {
-    const parsedUrl = url.parse(req.url, true);
-
-    // Serve static files
+// Обработчик запросов
+const server = http.createServer(async (req, res) => {
+    // Статика
     if (req.url === '/' || req.url === '/index.html') {
-        try {
-            const html = await fs.promises.readFile(
-                path.join(__dirname, 'index.html'),
-                'utf8'
+        const html = await fs.promises.readFile('./index.html', 'utf8');
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        return res.end(html);
+    }
+
+    // Регистрация
+    if (req.url === '/auth/register' && req.method === 'POST') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', async () => {
+            const { username, password } = JSON.parse(body);
+            const hashedPass = await bcrypt.hash(password, 10);
+            const conn = await pool.getConnection();
+            await conn.query(
+                'INSERT INTO users (username, password) VALUES (?, ?)',
+                [username, hashedPass]
             );
-            res.writeHead(200, { 'Content-Type': 'text/html' });
-            res.end(html);
-        } catch (error) {
-            res.writeHead(500).end('Error loading index.html');
-        }
+            conn.release();
+            res.writeHead(201).end();
+        });
         return;
     }
 
-    // Auth endpoints
-    if (req.method === 'POST' && parsedUrl.pathname === '/auth/register') {
+    // Логин
+    if (req.url === '/auth/login' && req.method === 'POST') {
         let body = '';
         req.on('data', chunk => body += chunk);
         req.on('end', async () => {
-            try {
-                const { username, password } = JSON.parse(body);
-                
-                // Check if user exists
-                const [users] = await query(
-                    'SELECT * FROM users WHERE username = ?',
-                    [username]
-                );
-                
-                if (users.length > 0) {
-                    res.writeHead(400, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ message: 'Username already exists' }));
-                    return;
-                }
-                
-                // Hash password
-                const hashedPassword = await bcrypt.hash(password, 10);
-                
-                // Create user
-                await query(
-                    'INSERT INTO users (username, password) VALUES (?, ?)',
-                    [username, hashedPassword]
-                );
-                
-                res.writeHead(201, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ message: 'User registered successfully' }));
-            } catch (error) {
-                console.error('Registration error:', error);
-                res.writeHead(500).end('Registration failed');
+            const { username, password } = JSON.parse(body);
+            const conn = await pool.getConnection();
+            const [users] = await conn.query(
+                'SELECT * FROM users WHERE username = ?',
+                [username]
+            );
+            conn.release();
+
+            if (users.length === 0 || !(await bcrypt.compare(password, users[0].password))) {
+                return res.writeHead(401).end();
             }
+
+            const sessionId = Date.now().toString();
+            sessions[sessionId] = username;
+            res.setHeader('Set-Cookie', `session=${sessionId}; Path=/`);
+            res.writeHead(200).end();
         });
         return;
     }
 
-    if (req.method === 'POST' && parsedUrl.pathname === '/auth/login') {
+    // Работа с задачами (только для авторизованных)
+    const user = checkAuth(req);
+    if (!user) return res.writeHead(401).end();
+
+    // GET /todos - получить список
+    if (req.url === '/todos' && req.method === 'GET') {
+        const conn = await pool.getConnection();
+        const [todos] = await conn.query(
+            'SELECT * FROM todos WHERE user_id = (SELECT id FROM users WHERE username = ?)',
+            [user]
+        );
+        conn.release();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        return res.end(JSON.stringify(todos));
+    }
+
+    // POST /todos - добавить задачу
+    if (req.url === '/todos' && req.method === 'POST') {
         let body = '';
         req.on('data', chunk => body += chunk);
         req.on('end', async () => {
-            try {
-                const { username, password } = JSON.parse(body);
-                
-                // Find user
-                const [users] = await query(
-                    'SELECT * FROM users WHERE username = ?',
-                    [username]
-                );
-                
-                if (users.length === 0) {
-                    res.writeHead(401, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ message: 'Invalid credentials' }));
-                    return;
-                }
-                
-                const user = users[0];
-                
-                // Check password
-                const passwordMatch = await bcrypt.compare(password, user.password);
-                if (!passwordMatch) {
-                    res.writeHead(401, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ message: 'Invalid credentials' }));
-                    return;
-                }
-                
-                // Generate JWT
-                const token = jwt.sign(
-                    { id: user.id, username: user.username },
-                    JWT_SECRET,
-                    { expiresIn: '1h' }
-                );
-                
-                res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ token }));
-            } catch (error) {
-                console.error('Login error:', error);
-                res.writeHead(500).end('Login failed');
-            }
+            const { text } = JSON.parse(body);
+            const conn = await pool.getConnection();
+            await conn.query(
+                'INSERT INTO todos (user_id, text) VALUES ((SELECT id FROM users WHERE username = ?), ?)',
+                [user, text]
+            );
+            conn.release();
+            res.writeHead(201).end();
         });
         return;
     }
 
-    // Todo endpoints (protected)
-    if (req.method === 'GET' && parsedUrl.pathname === '/todos') {
-        authenticate(req, res, async () => {
-            try {
-                const todos = await query(
-                    'SELECT * FROM todos WHERE user_id = ? ORDER BY created_at DESC',
-                    [req.user.id]
-                );
-                res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify(todos));
-            } catch (error) {
-                console.error('Error getting todos:', error);
-                res.writeHead(500).end('Error getting todos');
-            }
-        });
-        return;
-    }
+    res.writeHead(404).end();
+});
 
-    if (req.method === 'POST' && parsedUrl.pathname === '/todos') {
-        authenticate(req, res, async () => {
-            let body = '';
-            req.on('data', chunk => body += chunk);
-            req.on('end', async () => {
-                try {
-                    const { text } = JSON.parse(body);
-                    await query(
-                        'INSERT INTO todos (user_id, text) VALUES (?, ?)',
-                        [req.user.id, text]
-                    );
-                    res.writeHead(201).end();
-                } catch (error) {
-                    console.error('Error adding todo:', error);
-                    res.writeHead(500).end('Error adding todo');
-                }
-            });
-        });
-        return;
-    }
-
-    if (req.method === 'DELETE' && parsedUrl.pathname.startsWith('/todos/')) {
-        authenticate(req, res, async () => {
-            const todoId = parsedUrl.pathname.split('/')[2];
-            try {
-                // Verify the todo belongs to the user
-                const [todos] = await query(
-                    'SELECT * FROM todos WHERE id = ? AND user_id = ?',
-                    [todoId, req.user.id]
-                );
-                
-                if (todos.length === 0) {
-                    res.writeHead(404).end('Todo not found');
-                    return;
-                }
-                
-                await query(
-                    'DELETE FROM todos WHERE id = ?',
-                    [todoId]
-                );
-                res.writeHead(200).end();
-            } catch (error) {
-                console.error('Error deleting todo:', error);
-                res.writeHead(500).end('Error deleting todo');
-            }
-        });
-        return;
-    }
-
-    // Not found
-    res.writeHead(404).end('Not found');
-}
-
-// Initialize database and start server
-initializeDatabase().then(() => {
-    const server = http.createServer(handleRequest);
-    server.listen(PORT, () => {
-        console.log(`Server running on http://localhost:${PORT}`);
-    });
+// Запуск
+initDB().then(() => {
+    server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
 });
