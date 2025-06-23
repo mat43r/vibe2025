@@ -1,101 +1,167 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>To-Do List</title>
     <style>
         body {
             font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
         }
-        #todoList {
-            border-collapse: collapse;
-            width: 70%;
+        .container {
+            max-width: 800px;
             margin: 0 auto;
         }
-        #todoList th, #todoList td {
-            border: 1px solid #ddd;
-            padding: 8px;
-            text-align: left;
+        h1 {
+            text-align: center;
         }
-        #todoList th {
-            background-color: #f0f0f0;
+        #todo-form {
+            display: flex;
+            margin-bottom: 20px;
         }
-        #todoList th:first-child, #todoList th:last-child {
-            width: 5%;
+        #todo-input {
+            flex-grow: 1;
+            padding: 10px;
+            font-size: 16px;
         }
-        #todoList th:nth-child(2) {
-            width: 90%;
+        #add-button {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
         }
-        .add-form {
-            margin-top: 20px;
-            width: 70%;
-            margin: 20px auto;
+        #add-button:hover {
+            background-color: #45a049;
         }
-        .add-form input[type="text"] {
-            padding: 8px;
-            width: 70%;
+        #todo-list {
+            list-style-type: none;
+            padding: 0;
         }
-        .add-form button {
-            padding: 8px;
-            width: 20%;
+        .todo-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            border-bottom: 1px solid #ddd;
+        }
+        .todo-text {
+            flex-grow: 1;
+        }
+        .delete-btn {
+            background-color: #f44336;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+        .delete-btn:hover {
+            background-color: #d32f2f;
         }
     </style>
 </head>
 <body>
+    <div class="container">
+        <h1>To-Do List</h1>
+        <form id="todo-form">
+            <input type="text" id="todo-input" placeholder="Enter new task" required>
+            <button type="submit" id="add-button">Add</button>
+        </form>
+        <ul id="todo-list"></ul>
+    </div>
 
-<h2 style="text-align: center;">To-Do List</h2>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const form = document.getElementById('todo-form');
+            const input = document.getElementById('todo-input');
+            const todoList = document.getElementById('todo-list');
 
-<table id="todoList">
-    <thead>
-        <tr>
-            <th>Number</th>
-            <th>Text</th>
-            <th>Action</th>
-        </tr>
-    </thead>
-    <tbody id="listBody">
-        {{rows}}
-    </tbody>
-</table>
+            // Load todos on page load
+            loadTodos();
 
-<div class="add-form">
-    <input type="text" id="newItem" placeholder="Enter new item" />
-    <button onclick="addItem()">Add</button>
-</div>
-
-<script>
-    async function addItem() {
-        const newItemInput = document.getElementById('newItem');
-        const newItemText = newItemInput.value.trim();
-        if (!newItemText) {
-            alert('Please enter a non-empty item.');
-            return;
-        }
-
-    try {
-            const response = await fetch('/add', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ text: newItemText })
+            // Form submission handler
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const text = input.value.trim();
+                
+                if (text) {
+                    await addTodo(text);
+                    input.value = '';
+                    loadTodos();
+                }
             });
 
-            if (response.ok) {
-                // Перезагрузим список после успешного добавления
-                const updatedHtml = await response.text();
-                document.getElementById('listBody').innerHTML = updatedHtml;
-                newItemInput.value = '';
-            } else {
-                const errorText = await response.text();
-                alert('Error adding item: ' + errorText);
+            // Load todos from server
+            async function loadTodos() {
+                try {
+                    const response = await fetch('/todos');
+                    const todos = await response.json();
+                    renderTodos(todos);
+                } catch (error) {
+                    console.error('Error loading todos:', error);
+                }
             }
-        } catch (err) {
-            alert('Network error: ' + err.message);
-        }
-    }
-</script>
 
+            // Add new todo to server
+            async function addTodo(text) {
+                try {
+                    const response = await fetch('/todos', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ text })
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error('Failed to add todo');
+                    }
+                } catch (error) {
+                    console.error('Error adding todo:', error);
+                }
+            }
+
+            // Delete todo from server
+            async function deleteTodo(id) {
+                try {
+                    const response = await fetch(`/todos/${id}`, {
+                        method: 'DELETE'
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error('Failed to delete todo');
+                    }
+                    loadTodos();
+                } catch (error) {
+                    console.error('Error deleting todo:', error);
+                }
+            }
+
+            // Render todos to the page
+            function renderTodos(todos) {
+                todoList.innerHTML = '';
+                todos.forEach(todo => {
+                    const li = document.createElement('li');
+                    li.className = 'todo-item';
+                    li.innerHTML = `
+                        <span class="todo-text">${todo.text}</span>
+                        <button class="delete-btn" data-id="${todo.id}">Delete</button>
+                    `;
+                    todoList.appendChild(li);
+                });
+
+                // Add event listeners to delete buttons
+                document.querySelectorAll('.delete-btn').forEach(button => {
+                    button.addEventListener('click', (e) => {
+                        const id = e.target.getAttribute('data-id');
+                        deleteTodo(id);
+                    });
+                });
+            }
+        });
+    </script>
 </body>
 </html>
