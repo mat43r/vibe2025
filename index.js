@@ -3,13 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const mysql = require('mysql2/promise');
 const url = require('url');
-const fetch = require('node-fetch'); // не забудь: npm install node-fetch@2
 
 const PORT = 3000;
-
-// Telegram bot configuration
-const TELEGRAM_TOKEN = '7568574046:AAFLeKxWSG4KDWsDsO9FOEgLtoMPhOEmec4';
-const TELEGRAM_CHAT_ID = '820702293';
 
 // Database connection settings
 const dbConfig = {
@@ -39,25 +34,6 @@ async function query(sql, params) {
     }
 }
 
-// Telegram notification
-async function sendToTelegram(text) {
-    const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
-    const payload = {
-        chat_id: TELEGRAM_CHAT_ID,
-        text: `📝 Новая задача: ${text}`
-    };
-
-    try {
-        await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-    } catch (err) {
-        console.error('Ошибка при отправке в Telegram:', err);
-    }
-}
-
 // Authentication middleware
 function authenticate(req) {
     const cookies = req.headers.cookie?.split(';').find(c => c.trim().startsWith('session='));
@@ -76,7 +52,8 @@ async function handleRequest(req, res) {
             res.writeHead(200, { 'Content-Type': 'text/html' });
             res.end(html);
         } catch (err) {
-            res.writeHead(500).end('Error loading page');
+            res.writeHead(500);
+            res.end('Error loading page');
         }
         return;
     }
@@ -92,38 +69,44 @@ async function handleRequest(req, res) {
                 if (username === AUTH_CREDENTIALS.username && password === AUTH_CREDENTIALS.password) {
                     const sessionId = Date.now().toString();
                     activeSessions[sessionId] = username;
+                    // Важно: строку с куки нужно в кавычках и использовать обратные кавычки для подстановки
                     res.setHeader('Set-Cookie', `session=${sessionId}; Path=/; HttpOnly`);
-                    res.writeHead(200).end();
+                    res.writeHead(200);
+                    res.end();
                 } else {
-                    res.writeHead(401).end('Invalid credentials');
+                    res.writeHead(401);
+                    res.end('Invalid credentials');
                 }
             } catch {
-                res.writeHead(400).end('Bad request');
+                res.writeHead(400);
+                res.end('Bad request');
             }
         });
         return;
     }
 
-    // Check authentication
+    // Check authentication for API endpoints
     const user = authenticate(req);
     if (!user) {
-        res.writeHead(401).end('Unauthorized');
+        res.writeHead(401);
+        res.end('Unauthorized');
         return;
     }
 
-    // Get todos
+    // Get all todos
     if (req.method === 'GET' && parsedUrl.pathname === '/todos') {
         try {
             const todos = await query('SELECT id, text FROM items');
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(todos));
         } catch (err) {
-            res.writeHead(500).end('Database error');
+            res.writeHead(500);
+            res.end('Database error');
         }
         return;
     }
 
-    // Add todo + send to Telegram
+    // Add new todo
     if (req.method === 'POST' && parsedUrl.pathname === '/todos') {
         let body = '';
         req.on('data', chunk => body += chunk);
@@ -131,10 +114,11 @@ async function handleRequest(req, res) {
             try {
                 const { text } = JSON.parse(body);
                 await query('INSERT INTO items (text) VALUES (?)', [text]);
-                await sendToTelegram(text);
-                res.writeHead(201).end();
+                res.writeHead(201);
+                res.end();
             } catch {
-                res.writeHead(400).end('Bad request');
+                res.writeHead(400);
+                res.end('Bad request');
             }
         });
         return;
@@ -149,9 +133,11 @@ async function handleRequest(req, res) {
             try {
                 const { text } = JSON.parse(body);
                 await query('UPDATE items SET text = ? WHERE id = ?', [text, id]);
-                res.writeHead(200).end();
+                res.writeHead(200);
+                res.end();
             } catch {
-                res.writeHead(400).end('Bad request');
+                res.writeHead(400);
+                res.end('Bad request');
             }
         });
         return;
@@ -162,9 +148,11 @@ async function handleRequest(req, res) {
         const id = parsedUrl.pathname.split('/')[2];
         try {
             await query('DELETE FROM items WHERE id = ?', [id]);
-            res.writeHead(200).end();
+            res.writeHead(200);
+            res.end();
         } catch {
-            res.writeHead(500).end('Database error');
+            res.writeHead(500);
+            res.end('Database error');
         }
         return;
     }
@@ -174,11 +162,13 @@ async function handleRequest(req, res) {
         const cookies = req.headers.cookie?.split(';').find(c => c.trim().startsWith('session='));
         const sessionId = cookies?.split('=')[1];
         delete activeSessions[sessionId];
-        res.writeHead(200).end();
+        res.writeHead(200);
+        res.end();
         return;
     }
 
-    res.writeHead(404).end('Not found');
+    res.writeHead(404);
+    res.end('Not found');
 }
 
 // Create and start server

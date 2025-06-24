@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>To-Do List with Auth</title>
     <style>
         body {
@@ -78,8 +78,8 @@
         <div id="auth-form" class="auth-form">
             <h2>Login</h2>
             <div id="error-msg" class="error"></div>
-            <input type="text" id="username" placeholder="Username">
-            <input type="password" id="password" placeholder="Password">
+            <input type="text" id="username" placeholder="Username" />
+            <input type="password" id="password" placeholder="Password" />
             <button onclick="login()">Login</button>
         </div>
 
@@ -99,26 +99,25 @@
             </table>
 
             <div class="add-form">
-                <input type="text" id="newItem" placeholder="Enter new item">
+                <input type="text" id="newItem" placeholder="Enter new item" />
                 <button onclick="addItem()">Add</button>
             </div>
         </div>
     </div>
 
     <script>
+        // Fixed credentials
+        const CORRECT_USERNAME = 'Zorin3337';
+        const CORRECT_PASSWORD = '12345';
+        
         let items = [];
+        let nextId = 1;
 
-        async function login() {
+        function login() {
             const username = document.getElementById('username').value;
             const password = document.getElementById('password').value;
-
-            const res = await fetch('/login', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password })
-            });
-
-            if (res.ok) {
+            
+            if (username === CORRECT_USERNAME && password === CORRECT_PASSWORD) {
                 document.getElementById('auth-form').classList.add('hidden');
                 document.getElementById('todo-app').classList.remove('hidden');
                 document.getElementById('username-display').textContent = username;
@@ -128,8 +127,7 @@
             }
         }
 
-        async function logout() {
-            await fetch('/logout', { method: 'POST' });
+        function logout() {
             document.getElementById('auth-form').classList.remove('hidden');
             document.getElementById('todo-app').classList.add('hidden');
             document.getElementById('username').value = '';
@@ -137,58 +135,7 @@
             document.getElementById('error-msg').textContent = '';
         }
 
-        async function loadTodos() {
-            const res = await fetch('/todos');
-            items = await res.json();
-            renderList();
-        }
-
-        async function addItem() {
-            const newItemInput = document.getElementById('newItem');
-            const newItemText = newItemInput.value.trim();
-
-            if (newItemText) {
-                await fetch('/todos', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ text: newItemText })
-                });
-                newItemInput.value = '';
-                loadTodos();
-            }
-        }
-
-        async function removeItem(index) {
-            const item = items[index];
-            await fetch(`/todos/${item.id}`, { method: 'DELETE' });
-            loadTodos();
-        }
-
-        function startEdit(index) {
-            const rows = document.querySelectorAll('#listBody tr');
-            const textCell = rows[index].querySelector('.item-text');
-            const currentText = items[index].text;
-
-            textCell.innerHTML = `
-                <input type="text" class="edit-input" value="${currentText}">
-                <button onclick="saveEdit(${index})">Save</button>
-                <button onclick="cancelEdit()">Cancel</button>
-            `;
-        }
-
-        async function saveEdit(index) {
-            const rows = document.querySelectorAll('#listBody tr');
-            const newText = rows[index].querySelector('.edit-input').value;
-
-            await fetch(`/todos/${items[index].id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: newText })
-            });
-            loadTodos();
-        }
-
-        function cancelEdit() {
+        function loadTodos() {
             renderList();
         }
 
@@ -208,6 +155,45 @@
                 `;
                 listBody.appendChild(row);
             });
+        }
+
+        function addItem() {
+            const newItemInput = document.getElementById('newItem');
+            const newItemText = newItemInput.value.trim();
+
+            if (newItemText) {
+                items.push({ id: nextId++, text: newItemText });
+                newItemInput.value = '';
+                renderList();
+            }
+        }
+
+        function removeItem(index) {
+            items.splice(index, 1);
+            renderList();
+        }
+
+        function startEdit(index) {
+            const rows = document.querySelectorAll('#listBody tr');
+            const textCell = rows[index].querySelector('.item-text');
+            const currentText = items[index].text;
+            
+            textCell.innerHTML = `
+                <input type="text" class="edit-input" value="${currentText}" />
+                <button onclick="saveEdit(${index})">Save</button>
+                <button onclick="cancelEdit(${index})">Cancel</button>
+            `;
+        }
+
+        function saveEdit(index) {
+            const rows = document.querySelectorAll('#listBody tr');
+            const newText = rows[index].querySelector('.edit-input').value;
+            items[index].text = newText;
+            renderList();
+        }
+
+        function cancelEdit(index) {
+            renderList();
         }
     </script>
 </body>
