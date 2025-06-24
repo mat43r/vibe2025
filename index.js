@@ -16,7 +16,7 @@ const DB_CONFIG = {
 // Telegram настройки
 const TELEGRAM = {
   token: process.env.TELEGRAM_TOKEN || '7568574046:AAFLeKxWSG4KDWsDsO9FOEgLtoMPhOEmec4',
-  chatId: process.env.TELEGRAM_CHAT_ID || '820702293D'
+  chatId: process.env.TELEGRAM_CHAT_ID || '820702293'
 };
 
 // Проверка обязательных параметров
