@@ -6,7 +6,7 @@ const https = require('https');
 
 const PORT = 3000;
 
-// Конфигурация (проверьте значения!)
+// Конфигурация (ОБЯЗАТЕЛЬНО ПРОВЕРЬТЕ ЗНАЧЕНИЯ!)
 const CONFIG = {
   db: {
     host: 'localhost',
@@ -19,32 +19,28 @@ const CONFIG = {
     password: '12345'
   },
   telegram: {
-    token: '7993580399:AAEQdT2wv1ZaAf-6_5cDi7pW7cOz6gI5WUE',
-    chatId: '7993580399' // Убедитесь, что это правильный chat_id
+    token: '8002484122:AAFDki6uH4kkABYgtGIXmKyGOVrowpi9VOQ',
+    chatId: '166026743' // Должен быть ID чата, а не бота!
   }
 };
 
-// Глобальные переменные
 const activeSessions = {};
 let telegramOffset = 0;
 
-// --- Основные функции ---
-
-async function query(sql, params = []) {
-  const connection = await mysql.createConnection(CONFIG.db);
-  try {
-    const [results] = await connection.execute(sql, params);
-    return results;
-  } finally {
-    await connection.end();
-  }
-}
+// --- Исправленные функции для работы с Telegram ---
 
 async function sendTelegramMessage(text) {
+  // Проверка на пустое сообщение
+  if (!text || typeof text !== 'string' || text.trim() === '') {
+    console.error('Попытка отправить пустое сообщение в Telegram');
+    return false;
+  }
+
   return new Promise((resolve) => {
     const data = JSON.stringify({
       chat_id: CONFIG.telegram.chatId,
-      text: text
+      text: text,
+      parse_mode: 'HTML'
     });
 
     const options = {
@@ -53,37 +49,31 @@ async function sendTelegramMessage(text) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Content-Length': data.length
+        'Content-Length': Buffer.byteLength(data)
       },
       timeout: 5000
     };
 
     const req = https.request(options, (res) => {
       let responseData = '';
-      res.setEncoding('utf8');
       res.on('data', (chunk) => responseData += chunk);
       res.on('end', () => {
         try {
           const json = JSON.parse(responseData);
           if (!json.ok) {
-            console.error('Telegram API error:', json.description);
+            console.error('Ошибка Telegram API:', json.description);
           }
+          resolve(json.ok);
         } catch (e) {
-          console.error('Failed to parse Telegram response:', e.message);
+          console.error('Ошибка парсинга ответа Telegram:', e);
+          resolve(false);
         }
-        resolve();
       });
     });
 
     req.on('error', (e) => {
-      console.error('Telegram request failed:', e.message);
-      resolve();
-    });
-
-    req.on('timeout', () => {
-      req.destroy();
-      console.error('Telegram request timeout');
-      resolve();
+      console.error('Ошибка запроса к Telegram:', e.message);
+      resolve(false);
     });
 
     req.write(data);
@@ -91,151 +81,36 @@ async function sendTelegramMessage(text) {
   });
 }
 
-async function getTelegramUpdates() {
-  return new Promise((resolve) => {
-    const url = `https://api.telegram.org/bot${CONFIG.telegram.token}/getUpdates?offset=${telegramOffset + 1}&timeout=10`;
-    
-    https.get(url, (res) => {
-      let data = '';
-      res.on('data', chunk => data += chunk);
-      res.on('end', () => {
-        try {
-          resolve(JSON.parse(data));
-        } catch (e) {
-          console.error('Telegram response parse error:', e.message);
-          resolve({ ok: false });
-        }
-      });
-    }).on('error', (e) => {
-      console.error('Telegram API request error:', e.message);
-      resolve({ ok: false });
-    });
-  });
-}
-
-async function pollTelegram() {
-  try {
-    const updates = await getTelegramUpdates();
-    
-    if (!updates.ok) {
-      if (updates.error_code === 401) {
-        console.error('FATAL: Invalid Telegram bot token');
-        process.exit(1);
-      }
-      return;
-    }
-
-    if (updates.result?.length > 0) {
-      for (const update of updates.result) {
-        telegramOffset = update.update_id;
-        
-        if (update.message?.text) {
-          const text = update.message.text.trim();
-          const chatId = update.message.chat.id;
-
-          if (text === '/start') {
-            await sendTelegramMessage('🚀 Бот To-Do List активен!\nКоманды:\n/list - показать задачи');
-          } else if (text === '/list') {
-            const todos = await query('SELECT text FROM items');
-            const message = todos.length 
-              ? todos.map((t, i) => `${i+1}. ${t.text}`).join('\n')
-              : 'Список задач пуст';
-            await sendTelegramMessage(message);
-          }
-        }
-      }
-    }
-  } catch (err) {
-    console.error('Polling error:', err.message);
-  } finally {
-    setTimeout(pollTelegram, 2000);
-  }
-}
-
-// --- HTTP сервер ---
-
-async function handleRequest(req, res) {
-  try {
-    const parsedUrl = new URL(req.url, `http://${req.headers.host}`);
-    
-    // Статический файл
-    if (parsedUrl.pathname === '/') {
-      const todos = await query('SELECT id, text FROM items');
-      const html = await fs.readFile(path.join(__dirname, 'index.html'), 'utf8');
-      const rows = todos.map(t => `
-        <tr>
-          <td>${t.id}</td>
-          <td>${t.text}</td>
-          <td><button onclick="deleteItem(${t.id})">×</button></td>
-        </tr>
-      `).join('');
-      
-      res.writeHead(200, { 'Content-Type': 'text/html' });
-      return res.end(html.replace('{{rows}}', rows));
-    }
-
-    // API endpoints
-    if (req.method === 'POST') {
-      let body = '';
-      req.on('data', chunk => body += chunk);
-      req.on('end', async () => {
-        try {
-          const data = body ? JSON.parse(body) : {};
-          
-          if (parsedUrl.pathname === '/login') {
-            if (data.username === CONFIG.auth.username && data.password === CONFIG.auth.password) {
-              const sessionId = Date.now().toString();
-              activeSessions[sessionId] = data.username;
-              res.setHeader('Set-Cookie', `session=${sessionId}; Path=/; HttpOnly`);
-              return res.end();
-            }
-            return res.writeHead(401).end();
-          }
-
-          const cookies = req.headers.cookie?.split(';').find(c => c.trim().startsWith('session='));
-          const sessionId = cookies?.split('=')[1];
-          if (!activeSessions[sessionId]) {
-            return res.writeHead(401).end();
-          }
-
-          if (parsedUrl.pathname === '/add') {
-            if (!data.text) {
-              return res.writeHead(400).end();
-            }
-            await query('INSERT INTO items (text) VALUES (?)', [data.text]);
-            await sendTelegramMessage(`➕ Добавлена: "${data.text}"`);
-            return res.end();
-          }
-
-          if (parsedUrl.pathname.startsWith('/delete/')) {
-            const id = parsedUrl.pathname.split('/')[2];
-            const [task] = await query('SELECT text FROM items WHERE id = ?', [id]);
-            await query('DELETE FROM items WHERE id = ?', [id]);
-            
-            if (task && task.text) {
-              await sendTelegramMessage(`❌ Удалена: "${task.text}"`);
-            }
-            return res.end();
-          }
-        } catch (err) {
-          console.error('API error:', err);
-          res.writeHead(400).end();
-        }
-      });
-      return;
-    }
-
-    res.writeHead(404).end();
-  } catch (err) {
-    console.error('Request error:', err);
-    res.writeHead(500).end();
-  }
-}
-
-// --- Инициализация ---
+// --- Остальные функции остаются без изменений ---
 
 async function initialize() {
   try {
+    // Проверка подключения к БД
+    await query('SELECT 1');
+    console.log('Успешное подключение к базе данных');
+
+    // Проверка токена бота
+    const botCheck = await new Promise((resolve) => {
+      https.get(`https://api.telegram.org/bot${CONFIG.telegram.token}/getMe`, (res) => {
+        let data = '';
+        res.on('data', (chunk) => data += chunk);
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(data));
+          } catch (e) {
+            resolve({ ok: false, description: 'Parse error' });
+          }
+        });
+      }).on('error', () => resolve({ ok: false, description: 'Request error' }));
+    });
+
+    if (!botCheck.ok) {
+      throw new Error(`Неверный токен Telegram бота: ${botCheck.description || 'Unknown error'}`);
+    }
+
+    console.log(`Бот @${botCheck.result.username} успешно подключен`);
+
+    // Создаем таблицу если её нет
     await query(`
       CREATE TABLE IF NOT EXISTS items (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -244,29 +119,25 @@ async function initialize() {
       )
     `);
 
-    // Проверка токена при старте
-    const test = await new Promise((resolve) => {
-      https.get(`https://api.telegram.org/bot${CONFIG.telegram.token}/getMe`, (res) => {
-        let data = '';
-        res.on('data', chunk => data += chunk);
-        res.on('end', () => resolve(data));
-      }).on('error', (err) => resolve(JSON.stringify({ ok: false, error: err.message })));
-    });
-
-    const testResult = JSON.parse(test);
-    if (!testResult.ok) {
-      throw new Error('Неверный токен Telegram бота');
-    }
-
     const server = http.createServer(handleRequest);
     server.listen(PORT, () => {
       console.log(`Сервер запущен на http://localhost:${PORT}`);
       console.log(`Логин: ${CONFIG.auth.username}, Пароль: ${CONFIG.auth.password}`);
+      
+      // Отправляем тестовое сообщение
+      sendTelegramMessage('🔔 Сервер To-Do List успешно запущен!')
+        .then(success => {
+          if (success) {
+            console.log('Тестовое сообщение в Telegram отправлено успешно');
+          } else {
+            console.log('Не удалось отправить тестовое сообщение в Telegram');
+          }
+        });
+      
       pollTelegram();
-      sendTelegramMessage('🔔 Сервер To-Do List запущен!');
     });
   } catch (err) {
-    console.error('Ошибка инициализации:', err.message);
+    console.error('Фатальная ошибка инициализации:', err.message);
     process.exit(1);
   }
 }
