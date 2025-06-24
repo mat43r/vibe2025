@@ -20,7 +20,7 @@ const CONFIG = {
   },
   telegram: {
     token: '7993580399:AAEQdT2wv1ZaAf-6_5cDi7pW7cOz6gI5WUE',
-    chatId: '7993580399' // Замените на реальный chat_id
+    chatId: '7993580399' // Убедитесь, что это правильный chat_id
   }
 };
 
@@ -93,27 +93,16 @@ async function sendTelegramMessage(text) {
 
 async function getTelegramUpdates() {
   return new Promise((resolve) => {
-    const url = new URL(`https://api.telegram.org/bot${CONFIG.telegram.token}/getUpdates`);
-    url.searchParams.append('offset', telegramOffset + 1);
-    url.searchParams.append('timeout', 10);
-
-    https.get(url.toString(), (res) => {
+    const url = `https://api.telegram.org/bot${CONFIG.telegram.token}/getUpdates?offset=${telegramOffset + 1}&timeout=10`;
+    
+    https.get(url, (res) => {
       let data = '';
-      
-      // Проверка content-type
-      const contentType = res.headers['content-type'] || '';
-      if (!contentType.includes('application/json')) {
-        console.error('Invalid content-type:', contentType);
-        return resolve({ ok: false });
-      }
-
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
         try {
           resolve(JSON.parse(data));
         } catch (e) {
           console.error('Telegram response parse error:', e.message);
-          console.error('Raw response:', data);
           resolve({ ok: false });
         }
       });
@@ -126,7 +115,6 @@ async function getTelegramUpdates() {
 
 async function pollTelegram() {
   try {
-    console.log('Polling Telegram updates...');
     const updates = await getTelegramUpdates();
     
     if (!updates.ok) {
@@ -146,13 +134,13 @@ async function pollTelegram() {
           const chatId = update.message.chat.id;
 
           if (text === '/start') {
-            await sendTelegramMessage(chatId, '🚀 Бот To-Do List активен!\nКоманды:\n/list - показать задачи');
+            await sendTelegramMessage('🚀 Бот To-Do List активен!\nКоманды:\n/list - показать задачи');
           } else if (text === '/list') {
             const todos = await query('SELECT text FROM items');
             const message = todos.length 
               ? todos.map((t, i) => `${i+1}. ${t.text}`).join('\n')
               : 'Список задач пуст';
-            await sendTelegramMessage(chatId, message);
+            await sendTelegramMessage(message);
           }
         }
       }
@@ -192,7 +180,7 @@ async function handleRequest(req, res) {
       req.on('data', chunk => body += chunk);
       req.on('end', async () => {
         try {
-          const data = JSON.parse(body);
+          const data = body ? JSON.parse(body) : {};
           
           if (parsedUrl.pathname === '/login') {
             if (data.username === CONFIG.auth.username && data.password === CONFIG.auth.password) {
@@ -211,8 +199,11 @@ async function handleRequest(req, res) {
           }
 
           if (parsedUrl.pathname === '/add') {
+            if (!data.text) {
+              return res.writeHead(400).end();
+            }
             await query('INSERT INTO items (text) VALUES (?)', [data.text]);
-            await sendTelegramMessage(CONFIG.telegram.chatId, `➕ Добавлена: "${data.text}"`);
+            await sendTelegramMessage(`➕ Добавлена: "${data.text}"`);
             return res.end();
           }
 
@@ -221,8 +212,8 @@ async function handleRequest(req, res) {
             const [task] = await query('SELECT text FROM items WHERE id = ?', [id]);
             await query('DELETE FROM items WHERE id = ?', [id]);
             
-            if (task.length) {
-              await sendTelegramMessage(CONFIG.telegram.chatId, `❌ Удалена: "${task[0].text}"`);
+            if (task && task.text) {
+              await sendTelegramMessage(`❌ Удалена: "${task.text}"`);
             }
             return res.end();
           }
@@ -259,10 +250,11 @@ async function initialize() {
         let data = '';
         res.on('data', chunk => data += chunk);
         res.on('end', () => resolve(data));
-      }).on('error', resolve);
+      }).on('error', (err) => resolve(JSON.stringify({ ok: false, error: err.message })));
     });
 
-    if (!test.includes('"ok":true')) {
+    const testResult = JSON.parse(test);
+    if (!testResult.ok) {
       throw new Error('Неверный токен Telegram бота');
     }
 
