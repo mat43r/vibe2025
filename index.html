@@ -106,18 +106,19 @@
     </div>
 
     <script>
-        // Fixed credentials
-        const CORRECT_USERNAME = 'Zorin3337';
-        const CORRECT_PASSWORD = '12345';
-        
         let items = [];
-        let nextId = 1;
 
-        function login() {
+        async function login() {
             const username = document.getElementById('username').value;
             const password = document.getElementById('password').value;
-            
-            if (username === CORRECT_USERNAME && password === CORRECT_PASSWORD) {
+
+            const res = await fetch('/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+
+            if (res.ok) {
                 document.getElementById('auth-form').classList.add('hidden');
                 document.getElementById('todo-app').classList.remove('hidden');
                 document.getElementById('username-display').textContent = username;
@@ -127,7 +128,8 @@
             }
         }
 
-        function logout() {
+        async function logout() {
+            await fetch('/logout', { method: 'POST' });
             document.getElementById('auth-form').classList.remove('hidden');
             document.getElementById('todo-app').classList.add('hidden');
             document.getElementById('username').value = '';
@@ -135,8 +137,58 @@
             document.getElementById('error-msg').textContent = '';
         }
 
-        function loadTodos() {
-            // In a real app, you would load from server here
+        async function loadTodos() {
+            const res = await fetch('/todos');
+            items = await res.json();
+            renderList();
+        }
+
+        async function addItem() {
+            const newItemInput = document.getElementById('newItem');
+            const newItemText = newItemInput.value.trim();
+
+            if (newItemText) {
+                await fetch('/todos', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: newItemText })
+                });
+                newItemInput.value = '';
+                loadTodos();
+            }
+        }
+
+        async function removeItem(index) {
+            const item = items[index];
+            await fetch(`/todos/${item.id}`, { method: 'DELETE' });
+            loadTodos();
+        }
+
+        function startEdit(index) {
+            const rows = document.querySelectorAll('#listBody tr');
+            const textCell = rows[index].querySelector('.item-text');
+            const currentText = items[index].text;
+
+            textCell.innerHTML = `
+                <input type="text" class="edit-input" value="${currentText}">
+                <button onclick="saveEdit(${index})">Save</button>
+                <button onclick="cancelEdit()">Cancel</button>
+            `;
+        }
+
+        async function saveEdit(index) {
+            const rows = document.querySelectorAll('#listBody tr');
+            const newText = rows[index].querySelector('.edit-input').value;
+
+            await fetch(`/todos/${items[index].id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: newText })
+            });
+            loadTodos();
+        }
+
+        function cancelEdit() {
             renderList();
         }
 
@@ -156,45 +208,6 @@
                 `;
                 listBody.appendChild(row);
             });
-        }
-
-        function addItem() {
-            const newItemInput = document.getElementById('newItem');
-            const newItemText = newItemInput.value.trim();
-
-            if (newItemText) {
-                items.push({ id: nextId++, text: newItemText });
-                newItemInput.value = '';
-                renderList();
-            }
-        }
-
-        function removeItem(index) {
-            items.splice(index, 1);
-            renderList();
-        }
-
-        function startEdit(index) {
-            const rows = document.querySelectorAll('#listBody tr');
-            const textCell = rows[index].querySelector('.item-text');
-            const currentText = items[index].text;
-            
-            textCell.innerHTML = `
-                <input type="text" class="edit-input" value="${currentText}">
-                <button onclick="saveEdit(${index})">Save</button>
-                <button onclick="cancelEdit(${index})">Cancel</button>
-            `;
-        }
-
-        function saveEdit(index) {
-            const rows = document.querySelectorAll('#listBody tr');
-            const newText = rows[index].querySelector('.edit-input').value;
-            items[index].text = newText;
-            renderList();
-        }
-
-        function cancelEdit(index) {
-            renderList();
         }
     </script>
 </body>

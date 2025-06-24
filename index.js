@@ -3,8 +3,13 @@ const fs = require('fs');
 const path = require('path');
 const mysql = require('mysql2/promise');
 const url = require('url');
+const fetch = require('node-fetch'); // не забудь: npm install node-fetch@2
 
 const PORT = 3000;
+
+// Telegram bot configuration
+const TELEGRAM_TOKEN = '7568574046:AAFLeKxWSG4KDWsDsO9FOEgLtoMPhOEmec4';
+const TELEGRAM_CHAT_ID = '820702293';
 
 // Database connection settings
 const dbConfig = {
@@ -31,6 +36,25 @@ async function query(sql, params) {
         return results;
     } finally {
         await connection.end();
+    }
+}
+
+// Telegram notification
+async function sendToTelegram(text) {
+    const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
+    const payload = {
+        chat_id: TELEGRAM_CHAT_ID,
+        text: `📝 Новая задача: ${text}`
+    };
+
+    try {
+        await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+    } catch (err) {
+        console.error('Ошибка при отправке в Telegram:', err);
     }
 }
 
@@ -64,7 +88,7 @@ async function handleRequest(req, res) {
         req.on('end', async () => {
             try {
                 const { username, password } = JSON.parse(body);
-                
+
                 if (username === AUTH_CREDENTIALS.username && password === AUTH_CREDENTIALS.password) {
                     const sessionId = Date.now().toString();
                     activeSessions[sessionId] = username;
@@ -80,14 +104,14 @@ async function handleRequest(req, res) {
         return;
     }
 
-    // Check authentication for API endpoints
+    // Check authentication
     const user = authenticate(req);
     if (!user) {
         res.writeHead(401).end('Unauthorized');
         return;
     }
 
-    // Get all todos
+    // Get todos
     if (req.method === 'GET' && parsedUrl.pathname === '/todos') {
         try {
             const todos = await query('SELECT id, text FROM items');
@@ -99,7 +123,7 @@ async function handleRequest(req, res) {
         return;
     }
 
-    // Add new todo
+    // Add todo + send to Telegram
     if (req.method === 'POST' && parsedUrl.pathname === '/todos') {
         let body = '';
         req.on('data', chunk => body += chunk);
@@ -107,6 +131,7 @@ async function handleRequest(req, res) {
             try {
                 const { text } = JSON.parse(body);
                 await query('INSERT INTO items (text) VALUES (?)', [text]);
+                await sendToTelegram(text);
                 res.writeHead(201).end();
             } catch {
                 res.writeHead(400).end('Bad request');
