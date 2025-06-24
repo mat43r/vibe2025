@@ -24,7 +24,7 @@ const AUTH_CREDENTIALS = {
 const activeSessions = {};
 
 // Telegram настройки
-const TELEGRAM_BOT_TOKEN = '7568574046:AAFLeKxWSG4KDWsDsO9FOEgLtoMPhOEmec4'; // <-- Вставь сюда токен от @BotFather
+const TELEGRAM_BOT_TOKEN = '7993580399:AAEQdT2wv1ZaAf-6_5cDi7pW7cOz6gI5WUE'; // <-- Вставь сюда токен от @BotFather
 let telegramOffset = 0;
 
 async function query(sql, params) {
