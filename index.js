@@ -1,162 +1,180 @@
 const http = require('http');
-const fs = require('fs');
+const fs = require('fs').promises;
 const path = require('path');
 const mysql = require('mysql2/promise');
-const { Telegraf } = require('telegraf');
+const https = require('https');
 
-const PORT = 3000;
-const TELEGRAM_TOKEN = 'YOUR_BOT_TOKEN';
-const CHAT_ID = 'YOUR_CHAT_ID';
-
-// Инициализация бота
-const bot = new Telegraf(TELEGRAM_TOKEN);
-
-// Конфигурация БД
-const dbConfig = {
-    host: 'localhost',
-    user: 'root',
-    password: '',
-    database: 'todolist'
+// Конфигурация (лучше использовать переменные окружения)
+const PORT = process.env.PORT || 3000;
+const DB_CONFIG = {
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || '43Qwerty',
+  database: process.env.DB_NAME || 'todolist'
 };
 
-// Функция для работы с БД
-async function query(sql, params) {
-    const conn = await mysql.createConnection(dbConfig);
-    try {
-        const [results] = await conn.execute(sql, params);
-        return results;
-    } finally {
-        await conn.end();
-    }
+// Telegram настройки
+const TELEGRAM = {
+  token: process.env.TELEGRAM_TOKEN || '7568574046:AAFLeKxWSG4KDWsDsO9FOEgLtoMPhOEmec4',
+  chatId: process.env.TELEGRAM_CHAT_ID || '820702293D'
+};
+
+// Проверка обязательных параметров
+if (!TELEGRAM.token || !TELEGRAM.chatId) {
+  console.error('Требуются TELEGRAM_TOKEN и TELEGRAM_CHAT_ID');
+  process.exit(1);
 }
 
-// Отправка уведомлений в Telegram
-async function notifyTelegram(message) {
-    try {
-        await bot.telegram.sendMessage(CHAT_ID, `📝 To-Do: ${message}`);
-    } catch (err) {
-        console.error('Ошибка Telegram:', err);
-    }
-}
+// --- Вспомогательные функции ---
 
-// Получение списка задач
-async function getTodos() {
-    return await query('SELECT id, text FROM items ORDER BY id DESC');
-}
-
-// Добавление задачи
-async function addTodo(text) {
-    await query('INSERT INTO items (text) VALUES (?)', [text]);
-    await notifyTelegram(`Добавлена: "${text}"`);
-}
-
-// Удаление задачи
-async function deleteTodo(id) {
-    const [task] = await query('SELECT text FROM items WHERE id = ?', [id]);
-    await query('DELETE FROM items WHERE id = ?', [id]);
-    if (task.length > 0) {
-        await notifyTelegram(`Удалена: "${task[0].text}"`);
-    }
-}
-
-// Обработчик HTTP запросов
-async function handleRequest(req, res) {
-    const url = req.url;
-    
-    // Главная страница
-    if (url === '/') {
-        try {
-            const html = await fs.promises.readFile(
-                path.join(__dirname, 'index.html'), 
-                'utf8'
-            );
-            const todos = await getTodos();
-            const rows = todos.map(todo => `
-                <tr>
-                    <td>${todo.id}</td>
-                    <td>${todo.text}</td>
-                    <td><button onclick="deleteItem(${todo.id})">×</button></td>
-                </tr>
-            `).join('');
-            
-            res.writeHead(200, { 'Content-Type': 'text/html' });
-            res.end(html.replace('{{rows}}', rows));
-        } catch (err) {
-            res.writeHead(500).end('Ошибка сервера');
-        }
-        return;
-    }
-
-    // API для добавления
-    if (url === '/add' && req.method === 'POST') {
-        let body = '';
-        req.on('data', chunk => body += chunk);
-        req.on('end', async () => {
-            try {
-                const { text } = JSON.parse(body);
-                await addTodo(text);
-                res.writeHead(200).end();
-            } catch (err) {
-                res.writeHead(500).end('Ошибка добавления');
-            }
-        });
-        return;
-    }
-
-    // API для удаления
-    if (url.startsWith('/delete/') && req.method === 'POST') {
-        const id = url.split('/')[2];
-        try {
-            await deleteTodo(id);
-            res.writeHead(200).end();
-        } catch (err) {
-            res.writeHead(500).end('Ошибка удаления');
-        }
-        return;
-    }
-
-    res.writeHead(404).end('Not Found');
-}
-
-// Команды бота
-bot.command('start', (ctx) => {
-    ctx.reply('Привет! Я бот для управления To-Do List. Используй /list для просмотра задач');
-});
-
-bot.command('list', async (ctx) => {
-    try {
-        const todos = await getTodos();
-        if (todos.length === 0) {
-            return ctx.reply('Список задач пуст');
-        }
-        const list = todos.map(t => `• ${t.id}: ${t.text}`).join('\n');
-        ctx.reply(`Текущие задачи:\n${list}`);
-    } catch (err) {
-        ctx.reply('Ошибка получения списка');
-    }
-});
-
-// Инициализация и запуск
-(async () => {
-    // Создаем таблицу если не существует
-    await query(`
-        CREATE TABLE IF NOT EXISTS items (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            text VARCHAR(255) NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    `);
-
-    // Запуск сервера
-    const server = http.createServer(handleRequest);
-    server.listen(PORT, () => {
-        console.log(`Сервер запущен на порту ${PORT}`);
+async function sendTelegramMessage(text) {
+  return new Promise((resolve) => {
+    const data = JSON.stringify({
+      chat_id: TELEGRAM.chatId,
+      text: text,
+      disable_notification: false
     });
 
-    // Запуск бота
-    bot.launch();
-    console.log('Telegram бот запущен');
+    const req = https.request({
+      hostname: 'api.telegram.org',
+      path: `/bot${TELEGRAM.token}/sendMessage`,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': data.length
+      }
+    }, (res) => {
+      res.on('end', resolve);
+    });
 
-    // Уведомление о запуске
-    await notifyTelegram('Сервер To-Do List запущен!');
-})();
+    req.on('error', (e) => {
+      console.error('Ошибка Telegram API:', e.message);
+    });
+
+    req.write(data);
+    req.end();
+  });
+}
+
+async function dbQuery(sql, params = []) {
+  let conn;
+  try {
+    conn = await mysql.createConnection(DB_CONFIG);
+    const [results] = await conn.execute(sql, params);
+    return results;
+  } finally {
+    if (conn) await conn.end();
+  }
+}
+
+// --- Основные обработчики ---
+
+async function handleTodoRequest(req, res) {
+  try {
+    const todos = await dbQuery('SELECT * FROM items ORDER BY created_at DESC');
+    const html = await fs.readFile(path.join(__dirname, 'index.html'), 'utf8');
+    
+    const rowsHtml = todos.map(todo => `
+      <tr>
+        <td>${todo.id}</td>
+        <td>${todo.text}</td>
+        <td>
+          <button onclick="deleteItem(${todo.id})" class="delete-btn">×</button>
+        </td>
+      </tr>
+    `).join('');
+
+    res.writeHead(200, {'Content-Type': 'text/html'});
+    res.end(html.replace('{{rows}}', rowsHtml));
+    
+  } catch (err) {
+    console.error('Ошибка:', err);
+    res.writeHead(500).end('Internal Server Error');
+  }
+}
+
+async function handleAddTodo(req, res) {
+  let body = '';
+  req.on('data', chunk => body += chunk);
+  req.on('end', async () => {
+    try {
+      const { text } = JSON.parse(body);
+      if (!text || text.length > 255) {
+        return res.writeHead(400).end('Invalid text');
+      }
+
+      await dbQuery('INSERT INTO items (text) VALUES (?)', [text]);
+      await sendTelegramMessage(`➕ Добавлена: "${text}"`);
+      res.writeHead(200).end();
+      
+    } catch (err) {
+      res.writeHead(500).end('Add error');
+    }
+  });
+}
+
+async function handleDeleteTodo(req, res) {
+  const id = req.url.split('/')[2];
+  if (!id || isNaN(id)) {
+    return res.writeHead(400).end('Invalid ID');
+  }
+
+  try {
+    const [task] = await dbQuery('SELECT text FROM items WHERE id = ?', [id]);
+    if (!task.length) {
+      return res.writeHead(404).end('Task not found');
+    }
+
+    await dbQuery('DELETE FROM items WHERE id = ?', [id]);
+    await sendTelegramMessage(`❌ Удалена: "${task[0].text}"`);
+    res.writeHead(200).end();
+    
+  } catch (err) {
+    res.writeHead(500).end('Delete error');
+  }
+}
+
+// --- Инициализация ---
+
+async function initialize() {
+  try {
+    // Создаем таблицу если не существует
+    await dbQuery(`
+      CREATE TABLE IF NOT EXISTS items (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        text VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Запускаем сервер
+    const server = http.createServer(async (req, res) => {
+      try {
+        if (req.url === '/' && req.method === 'GET') {
+          return await handleTodoRequest(req, res);
+        }
+        if (req.url === '/add' && req.method === 'POST') {
+          return await handleAddTodo(req, res);
+        }
+        if (req.url.startsWith('/delete/') && req.method === 'POST') {
+          return await handleDeleteTodo(req, res);
+        }
+        res.writeHead(404).end('Not Found');
+      } catch (err) {
+        console.error('Ошибка обработки запроса:', err);
+        res.writeHead(500).end('Server Error');
+      }
+    });
+
+    server.listen(PORT, () => {
+      console.log(`Сервер запущен на http://localhost:${PORT}`);
+      sendTelegramMessage('🚀 To-Do List сервер запущен');
+    });
+
+  } catch (err) {
+    console.error('Ошибка инициализации:', err);
+    process.exit(1);
+  }
+}
+
+initialize();
