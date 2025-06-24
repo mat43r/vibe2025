@@ -1,140 +1,104 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>ToDo List</title>
-  <style>
-    body {
-      font-family: sans-serif;
-      background: #f0f0f0;
-      margin: 0;
-      padding: 20px;
-    }
-    h1 {
-      text-align: center;
-    }
-    #loginForm, #todoApp {
-      max-width: 400px;
-      margin: 0 auto;
-      padding: 20px;
-      background: white;
-      border-radius: 8px;
-      box-shadow: 0 0 10px #ccc;
-    }
-    input[type="text"], input[type="password"] {
-      width: calc(100% - 22px);
-      padding: 10px;
-      margin: 5px 0 10px;
-    }
-    button {
-      padding: 8px 15px;
-      margin-right: 5px;
-    }
-    ul {
-      padding: 0;
-      list-style: none;
-    }
-    li {
-      background: #fafafa;
-      margin-bottom: 5px;
-      padding: 8px;
-      border: 1px solid #ccc;
-      display: flex;
-      justify-content: space-between;
-    }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>To-Do List</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+        }
+        #todoList {
+            border-collapse: collapse;
+            width: 70%;
+            margin: 0 auto;
+        }
+        #todoList th, #todoList td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        #todoList th {
+            background-color: #f0f0f0;
+        }
+        #todoList th:first-child, #todoList th:last-child {
+            width: 5%;
+        }
+        #todoList th:nth-child(2) {
+            width: 90%;
+        }
+        .add-form {
+            margin-top: 20px;
+            width: 70%;
+            margin: 20px auto;
+        }
+        .add-form input[type="text"] {
+            padding: 8px;
+            width: 70%;
+        }
+        .add-form button {
+            padding: 8px;
+            width: 20%;
+        }
+    </style>
 </head>
 <body>
-  <h1>ToDo List</h1>
 
-  <div id="loginForm">
-    <h2>Вход</h2>
-    <input type="text" id="username" placeholder="Логин" /><br />
-    <input type="password" id="password" placeholder="Пароль" /><br />
-    <button onclick="login()">Войти</button>
-    <p id="loginError" style="color: red;"></p>
-  </div>
+<h2 style="text-align: center;">To-Do List</h2>
 
-  <div id="todoApp" style="display: none;">
-    <button onclick="logout()" style="float: right;">Выход</button>
-    <h2>Задачи</h2>
-    <input type="text" id="newTodo" placeholder="Новая задача" />
-    <button onclick="addTodo()">Добавить</button>
-    <ul id="todoList"></ul>
-  </div>
+<table id="todoList">
+    <thead>
+        <tr>
+            <th>Number</th>
+            <th>Text</th>
+            <th>Action</th>
+        </tr>
+    </thead>
+    <tbody id="listBody">
+        {{rows}}
+    </tbody>
+</table>
 
-  <script>
-    async function login() {
-      const username = document.getElementById('username').value;
-      const password = document.getElementById('password').value;
+<div class="add-form">
+    <input type="text" id="newItem" placeholder="Enter new item">
+    <button onclick="addItem()">Add</button>
+</div>
 
-      const res = await fetch('/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
-      });
+<script>
+    let items = [];
+    let nextId = 1;
 
-      if (res.ok) {
-        document.getElementById('loginForm').style.display = 'none';
-        document.getElementById('todoApp').style.display = 'block';
-        loadTodos();
-      } else {
-        document.getElementById('loginError').textContent = 'Неверный логин или пароль.';
-      }
+    function renderList() {
+        const listBody = document.getElementById('listBody');
+        listBody.innerHTML = '';
+
+        items.forEach((item, index) => {
+            const row = document.createElement('tr');
+            row.innerHTML = `
+                <td>${index + 1}</td>
+                <td>${item.text}</td>
+                <td><button onclick="removeItem(${index})">Remove</button></td>
+            `;
+            listBody.appendChild(row);
+        });
     }
 
-    async function logout() {
-      await fetch('/logout', { method: 'POST' });
-      location.reload();
+    function addItem() {
+        const newItemInput = document.getElementById('newItem');
+        const newItemText = newItemInput.value.trim();
+
+        if (newItemText) {
+            items.push({ id: nextId++, text: newItemText });
+            newItemInput.value = '';
+            renderList();
+        }
     }
 
-    async function loadTodos() {
-      const res = await fetch('/todos');
-      const todos = await res.json();
-      const list = document.getElementById('todoList');
-      list.innerHTML = '';
-      todos.forEach(todo => {
-        const li = document.createElement('li');
-        const input = document.createElement('input');
-        input.value = todo.text;
-        input.style.flex = '1';
-        input.addEventListener('change', () => updateTodo(todo.id, input.value));
-
-        const delBtn = document.createElement('button');
-        delBtn.textContent = 'Удалить';
-        delBtn.onclick = () => deleteTodo(todo.id);
-
-        li.appendChild(input);
-        li.appendChild(delBtn);
-        list.appendChild(li);
-      });
+    function removeItem(index) {
+        items.splice(index, 1);
+        renderList();
     }
+</script>
 
-    async function addTodo() {
-      const text = document.getElementById('newTodo').value.trim();
-      if (!text) return;
-      await fetch('/todos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
-      });
-      document.getElementById('newTodo').value = '';
-      loadTodos();
-    }
-
-    async function updateTodo(id, text) {
-      await fetch(`/todos/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
-      });
-    }
-
-    async function deleteTodo(id) {
-      await fetch(`/todos/${id}`, { method: 'DELETE' });
-      loadTodos();
-    }
-  </script>
 </body>
 </html>
