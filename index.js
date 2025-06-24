@@ -20,7 +20,7 @@ const CONFIG = {
   },
   telegram: {
     token: '7993580399:AAEQdT2wv1ZaAf-6_5cDi7pW7cOz6gI5WUE',
-    chatId: '820702293' // Убедитесь, что это правильный chat_id
+    chatId: '7993580399' // Убедитесь, что это правильный chat_id
   }
 };
 
