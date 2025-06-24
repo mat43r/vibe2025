@@ -7,7 +7,7 @@ const https = require('https');
 
 const PORT = 3000;
 
-// Настройки подключения к БД
+// Настройки подключения к БД.
 const dbConfig = {
     host: 'localhost',
     user: 'root',
