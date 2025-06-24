@@ -5,31 +5,60 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>To-Do List with Telegram</title>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
-        #todoList { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        #todoList th, #todoList td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-        #todoList th { background-color: #f2f2f2; }
-        .add-form { margin-top: 20px; display: flex; }
-        #newItem { flex-grow: 1; padding: 8px; }
-        button { padding: 8px 16px; cursor: pointer; }
-        .delete-btn { background-color: #ff4444; color: white; }
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        #todoList {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        #todoList th, #todoList td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        #todoList th {
+            background-color: #f2f2f2;
+        }
+        .add-form {
+            margin-top: 20px;
+            display: flex;
+        }
+        #newItem {
+            flex-grow: 1;
+            padding: 8px;
+        }
+        button {
+            padding: 8px 16px;
+            cursor: pointer;
+        }
+        .delete-btn {
+            background-color: #ff4444;
+            color: white;
+        }
     </style>
 </head>
 <body>
     <h1>To-Do List</h1>
     <div class="add-form">
-        <input type="text" id="newItem" placeholder="New task...">
-        <button onclick="addItem()">Add</button>
+        <input type="text" id="newItem" placeholder="Новая задача...">
+        <button onclick="addItem()">Добавить</button>
     </div>
     <table id="todoList">
         <thead>
             <tr>
                 <th>ID</th>
-                <th>Text</th>
-                <th>Actions</th>
+                <th>Задача</th>
+                <th>Действия</th>
             </tr>
         </thead>
-        <tbody id="listBody"></tbody>
+        <tbody>
+            {{rows}}
+        </tbody>
     </table>
 
     <script>
@@ -37,20 +66,29 @@
             const input = document.getElementById('newItem');
             const text = input.value.trim();
             if (!text) return;
-    
-            await fetch('/add', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text })
-            });
-    
-            input.value = '';
-            window.location.reload();
+
+            try {
+                await fetch('/add', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text })
+                });
+                input.value = '';
+                window.location.reload();
+            } catch (err) {
+                alert('Ошибка при добавлении');
+            }
         }
-    
+
         async function deleteItem(id) {
-            await fetch(`/delete/${id}`, { method: 'POST' });
-            window.location.reload();
+            if (confirm('Удалить эту задачу?')) {
+                try {
+                    await fetch(`/delete/${id}`, { method: 'POST' });
+                    window.location.reload();
+                } catch (err) {
+                    alert('Ошибка при удалении');
+                }
+            }
         }
     </script>
 </body>
