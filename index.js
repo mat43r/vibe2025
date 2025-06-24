@@ -2,14 +2,9 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const mysql = require('mysql2/promise');
-const TelegramBot = require('node-telegram-bot-api');
+const url = require('url');
 
 const PORT = 3000;
-const TELEGRAM_TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN';
-const CHAT_ID = 'YOUR_CHAT_ID';
-
-// Инициализация Telegram бота
-const bot = new TelegramBot(TELEGRAM_TOKEN, {polling: true});
 
 // Database connection settings
 const dbConfig = {
@@ -19,155 +14,153 @@ const dbConfig = {
     database: 'todolist'
 };
 
-// Отправка уведомления в Telegram
-async function sendTelegramNotification(message) {
-    try {
-        await bot.sendMessage(CHAT_ID, `📝 To-Do List Update:\n${message}`);
-    } catch (err) {
-        console.error('Telegram notification error:', err);
-    }
-}
+// Fixed credentials
+const AUTH_CREDENTIALS = {
+    username: 'Zorin3337',
+    password: '12345'
+};
 
-async function retrieveListItems() {
-    try {
-        const connection = await mysql.createConnection(dbConfig);
-        const [rows] = await connection.execute('SELECT id, text FROM items');
-        await connection.end();
-        return rows;
-    } catch (error) {
-        console.error('Error retrieving list items:', error);
-        throw error;
-    }
-}
+// Active sessions (in-memory storage)
+const activeSessions = {};
 
-// Новая функция для добавления задачи
-async function addTodoItem(text) {
+// Helper function to execute queries
+async function query(sql, params) {
     const connection = await mysql.createConnection(dbConfig);
     try {
-        const [result] = await connection.execute(
-            'INSERT INTO items (text) VALUES (?)',
-            [text]
-        );
-        await sendTelegramNotification(`✅ Добавлена новая задача: "${text}"`);
-        return result.insertId;
+        const [results] = await connection.execute(sql, params);
+        return results;
     } finally {
         await connection.end();
     }
 }
 
-// Новая функция для удаления задачи
-async function deleteTodoItem(id) {
-    const connection = await mysql.createConnection(dbConfig);
-    try {
-        // Получаем текст задачи перед удалением для уведомления
-        const [tasks] = await connection.execute(
-            'SELECT text FROM items WHERE id = ?',
-            [id]
-        );
-        
-        if (tasks.length > 0) {
-            await sendTelegramNotification(`❌ Удалена задача: "${tasks[0].text}"`);
-        }
-
-        await connection.execute(
-            'DELETE FROM items WHERE id = ?',
-            [id]
-        );
-    } finally {
-        await connection.end();
-    }
+// Authentication middleware
+function authenticate(req) {
+    const cookies = req.headers.cookie?.split(';').find(c => c.trim().startsWith('session='));
+    const sessionId = cookies?.split('=')[1];
+    return activeSessions[sessionId];
 }
 
-async function getHtmlRows() {
-    const todoItems = await retrieveListItems();
-    return todoItems.map(item => `
-        <tr data-id="${item.id}">
-            <td>${item.id}</td>
-            <td>${item.text}</td>
-            <td><button onclick="deleteItem(${item.id})">×</button></td>
-        </tr>
-    `).join('');
-}
-
+// Request handler
 async function handleRequest(req, res) {
-    const url = req.url;
-    const method = req.method;
+    const parsedUrl = url.parse(req.url, true);
 
-    // Обработка добавления новой задачи
-    if (url === '/add' && method === 'POST') {
+    // Serve login page
+    if (req.url === '/' || req.url === '/index.html') {
+        try {
+            const html = await fs.promises.readFile(path.join(__dirname, 'index.html'), 'utf8');
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.end(html);
+        } catch (err) {
+            res.writeHead(500).end('Error loading page');
+        }
+        return;
+    }
+
+    // Handle login
+    if (req.method === 'POST' && parsedUrl.pathname === '/login') {
         let body = '';
         req.on('data', chunk => body += chunk);
         req.on('end', async () => {
             try {
-                const { text } = JSON.parse(body);
-                await addTodoItem(text);
-                res.writeHead(200, {'Content-Type': 'application/json'});
-                res.end(JSON.stringify({success: true}));
-            } catch (err) {
-                res.writeHead(500).end('Error adding item');
+                const { username, password } = JSON.parse(body);
+                
+                if (username === AUTH_CREDENTIALS.username && password === AUTH_CREDENTIALS.password) {
+                    const sessionId = Date.now().toString();
+                    activeSessions[sessionId] = username;
+                    res.setHeader('Set-Cookie', `session=${sessionId}; Path=/; HttpOnly`);
+                    res.writeHead(200).end();
+                } else {
+                    res.writeHead(401).end('Invalid credentials');
+                }
+            } catch {
+                res.writeHead(400).end('Bad request');
             }
         });
         return;
     }
 
-    // Обработка удаления задачи
-    if (url.startsWith('/delete/') && method === 'POST') {
-        const id = url.split('/')[2];
+    // Check authentication for API endpoints
+    const user = authenticate(req);
+    if (!user) {
+        res.writeHead(401).end('Unauthorized');
+        return;
+    }
+
+    // Get all todos
+    if (req.method === 'GET' && parsedUrl.pathname === '/todos') {
         try {
-            await deleteTodoItem(id);
+            const todos = await query('SELECT id, text FROM items');
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(todos));
+        } catch (err) {
+            res.writeHead(500).end('Database error');
+        }
+        return;
+    }
+
+    // Add new todo
+    if (req.method === 'POST' && parsedUrl.pathname === '/todos') {
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', async () => {
+            try {
+                const { text } = JSON.parse(body);
+                await query('INSERT INTO items (text) VALUES (?)', [text]);
+                res.writeHead(201).end();
+            } catch {
+                res.writeHead(400).end('Bad request');
+            }
+        });
+        return;
+    }
+
+    // Update todo
+    if (req.method === 'PUT' && parsedUrl.pathname.startsWith('/todos/')) {
+        const id = parsedUrl.pathname.split('/')[2];
+        let body = '';
+        req.on('data', chunk => body += chunk);
+        req.on('end', async () => {
+            try {
+                const { text } = JSON.parse(body);
+                await query('UPDATE items SET text = ? WHERE id = ?', [text, id]);
+                res.writeHead(200).end();
+            } catch {
+                res.writeHead(400).end('Bad request');
+            }
+        });
+        return;
+    }
+
+    // Delete todo
+    if (req.method === 'DELETE' && parsedUrl.pathname.startsWith('/todos/')) {
+        const id = parsedUrl.pathname.split('/')[2];
+        try {
+            await query('DELETE FROM items WHERE id = ?', [id]);
             res.writeHead(200).end();
-        } catch (err) {
-            res.writeHead(500).end('Error deleting item');
+        } catch {
+            res.writeHead(500).end('Database error');
         }
         return;
     }
 
-    // Главная страница
-    if (url === '/') {
-        try {
-            const html = await fs.promises.readFile(
-                path.join(__dirname, 'index.html'), 
-                'utf8'
-            );
-            const processedHtml = html.replace('{{rows}}', await getHtmlRows());
-            res.writeHead(200, { 'Content-Type': 'text/html' });
-            res.end(processedHtml);
-        } catch (err) {
-            console.error(err);
-            res.writeHead(500, { 'Content-Type': 'text/plain' });
-            res.end('Error loading index.html');
-        }
+    // Logout
+    if (req.method === 'POST' && parsedUrl.pathname === '/logout') {
+        const cookies = req.headers.cookie?.split(';').find(c => c.trim().startsWith('session='));
+        const sessionId = cookies?.split('=')[1];
+        delete activeSessions[sessionId];
+        res.writeHead(200).end();
         return;
     }
 
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('Route not found');
+    res.writeHead(404).end('Not found');
 }
 
-// Команды для Telegram бота
-bot.onText(/\/start/, (msg) => {
-    bot.sendMessage(msg.chat.id, 'Привет! Я буду уведомлять тебя об изменениях в To-Do List.');
-});
-
-bot.onText(/\/list/, async (msg) => {
-    try {
-        const items = await retrieveListItems();
-        if (items.length === 0) {
-            bot.sendMessage(msg.chat.id, 'Список задач пуст.');
-        } else {
-            const taskList = items.map(item => `• ${item.text}`).join('\n');
-            bot.sendMessage(msg.chat.id, `Текущие задачи:\n${taskList}`);
-        }
-    } catch (err) {
-        bot.sendMessage(msg.chat.id, 'Не удалось получить список задач.');
-    }
-});
-
+// Create and start server
 const server = http.createServer(handleRequest);
 server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
-    console.log(`Telegram bot @${bot.options.username} started`);
-    console.log('Available Telegram commands:');
-    console.log('/start - Начать работу с ботом');
-    console.log('/list - Показать текущие задачи');
+    console.log('Login credentials:');
+    console.log(`Username: ${AUTH_CREDENTIALS.username}`);
+    console.log(`Password: ${AUTH_CREDENTIALS.password}`);
 });
