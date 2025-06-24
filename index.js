@@ -15,7 +15,7 @@ const TELEGRAM_CHAT_ID = '820702293';
 const dbConfig = {
     host: 'localhost',
     user: 'root',
-    password: '',
+    password: '43Qwerty',
     database: 'todolist'
 };
 
