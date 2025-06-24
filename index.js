@@ -6,7 +6,7 @@ const https = require('https');
 
 const PORT = 3000;
 
-// Конфигурация
+// Конфигурация (проверьте значения!)
 const CONFIG = {
   db: {
     host: 'localhost',
@@ -19,8 +19,8 @@ const CONFIG = {
     password: '12345'
   },
   telegram: {
-    token: '7993580399:AAEQdT2wv1ZaAf-6_5cDi7pW7cOz6gI5WUE', // Замените на реальный токен
-    chatId: '7993580399' // Замените на ваш chat_id
+    token: '7993580399:AAEQdT2wv1ZaAf-6_5cDi7pW7cOz6gI5WUE',
+    chatId: '7993580399' // Замените на реальный chat_id
   }
 };
 
@@ -47,21 +47,42 @@ async function sendTelegramMessage(text) {
       text: text
     });
 
-    const req = https.request({
+    const options = {
       hostname: 'api.telegram.org',
       path: `/bot${CONFIG.telegram.token}/sendMessage`,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Content-Length': data.length
-      }
-    }, (res) => {
-      res.on('data', () => {}); // Поглощаем ответ
-      res.on('end', resolve);
+      },
+      timeout: 5000
+    };
+
+    const req = https.request(options, (res) => {
+      let responseData = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk) => responseData += chunk);
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(responseData);
+          if (!json.ok) {
+            console.error('Telegram API error:', json.description);
+          }
+        } catch (e) {
+          console.error('Failed to parse Telegram response:', e.message);
+        }
+        resolve();
+      });
     });
 
     req.on('error', (e) => {
-      console.error('Ошибка Telegram:', e.message);
+      console.error('Telegram request failed:', e.message);
+      resolve();
+    });
+
+    req.on('timeout', () => {
+      req.destroy();
+      console.error('Telegram request timeout');
       resolve();
     });
 
@@ -72,21 +93,32 @@ async function sendTelegramMessage(text) {
 
 async function getTelegramUpdates() {
   return new Promise((resolve) => {
-    const url = `https://api.telegram.org/bot${CONFIG.telegram.token}/getUpdates?offset=${telegramOffset + 1}`;
-    
-    https.get(url, (res) => {
+    const url = new URL(`https://api.telegram.org/bot${CONFIG.telegram.token}/getUpdates`);
+    url.searchParams.append('offset', telegramOffset + 1);
+    url.searchParams.append('timeout', 10);
+
+    https.get(url.toString(), (res) => {
       let data = '';
+      
+      // Проверка content-type
+      const contentType = res.headers['content-type'] || '';
+      if (!contentType.includes('application/json')) {
+        console.error('Invalid content-type:', contentType);
+        return resolve({ ok: false });
+      }
+
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
         try {
           resolve(JSON.parse(data));
         } catch (e) {
-          console.error('Ошибка парсинга Telegram ответа:', e);
+          console.error('Telegram response parse error:', e.message);
+          console.error('Raw response:', data);
           resolve({ ok: false });
         }
       });
     }).on('error', (e) => {
-      console.error('Ошибка запроса к Telegram:', e.message);
+      console.error('Telegram API request error:', e.message);
       resolve({ ok: false });
     });
   });
@@ -94,32 +126,42 @@ async function getTelegramUpdates() {
 
 async function pollTelegram() {
   try {
+    console.log('Polling Telegram updates...');
     const updates = await getTelegramUpdates();
     
-    if (updates.ok && updates.result.length > 0) {
+    if (!updates.ok) {
+      if (updates.error_code === 401) {
+        console.error('FATAL: Invalid Telegram bot token');
+        process.exit(1);
+      }
+      return;
+    }
+
+    if (updates.result?.length > 0) {
       for (const update of updates.result) {
         telegramOffset = update.update_id;
         
-        if (update.message && update.message.text) {
+        if (update.message?.text) {
           const text = update.message.text.trim();
-          
+          const chatId = update.message.chat.id;
+
           if (text === '/start') {
-            await sendTelegramMessage('🚀 Бот To-Do List активен!\nКоманды:\n/list - показать задачи');
+            await sendTelegramMessage(chatId, '🚀 Бот To-Do List активен!\nКоманды:\n/list - показать задачи');
           } else if (text === '/list') {
             const todos = await query('SELECT text FROM items');
             const message = todos.length 
               ? todos.map((t, i) => `${i+1}. ${t.text}`).join('\n')
               : 'Список задач пуст';
-            await sendTelegramMessage(message);
+            await sendTelegramMessage(chatId, message);
           }
         }
       }
     }
   } catch (err) {
-    console.error('Ошибка опроса Telegram:', err.message);
+    console.error('Polling error:', err.message);
+  } finally {
+    setTimeout(pollTelegram, 2000);
   }
-  
-  setTimeout(pollTelegram, 1000);
 }
 
 // --- HTTP сервер ---
@@ -170,7 +212,7 @@ async function handleRequest(req, res) {
 
           if (parsedUrl.pathname === '/add') {
             await query('INSERT INTO items (text) VALUES (?)', [data.text]);
-            await sendTelegramMessage(`➕ Добавлена: "${data.text}"`);
+            await sendTelegramMessage(CONFIG.telegram.chatId, `➕ Добавлена: "${data.text}"`);
             return res.end();
           }
 
@@ -180,7 +222,7 @@ async function handleRequest(req, res) {
             await query('DELETE FROM items WHERE id = ?', [id]);
             
             if (task.length) {
-              await sendTelegramMessage(`❌ Удалена: "${task[0].text}"`);
+              await sendTelegramMessage(CONFIG.telegram.chatId, `❌ Удалена: "${task[0].text}"`);
             }
             return res.end();
           }
@@ -194,7 +236,7 @@ async function handleRequest(req, res) {
 
     res.writeHead(404).end();
   } catch (err) {
-    console.error('Ошибка обработки запроса:', err);
+    console.error('Request error:', err);
     res.writeHead(500).end();
   }
 }
@@ -211,18 +253,28 @@ async function initialize() {
       )
     `);
 
+    // Проверка токена при старте
+    const test = await new Promise((resolve) => {
+      https.get(`https://api.telegram.org/bot${CONFIG.telegram.token}/getMe`, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => resolve(data));
+      }).on('error', resolve);
+    });
+
+    if (!test.includes('"ok":true')) {
+      throw new Error('Неверный токен Telegram бота');
+    }
+
     const server = http.createServer(handleRequest);
     server.listen(PORT, () => {
       console.log(`Сервер запущен на http://localhost:${PORT}`);
       console.log(`Логин: ${CONFIG.auth.username}, Пароль: ${CONFIG.auth.password}`);
-      
-      // Проверка Telegram токена
-      sendTelegramMessage('🔔 Сервер To-Do List запущен!')
-        .then(() => pollTelegram())
-        .catch(err => console.error('Ошибка Telegram:', err.message));
+      pollTelegram();
+      sendTelegramMessage('🔔 Сервер To-Do List запущен!');
     });
   } catch (err) {
-    console.error('Ошибка инициализации:', err);
+    console.error('Ошибка инициализации:', err.message);
     process.exit(1);
   }
 }
